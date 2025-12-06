@@ -1,0 +1,1624 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ISO20022 Flow Visualizer</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Noto Sans KR', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+        },
+      },
+    }
+  </script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; width: 100%; font-family: 'Noto Sans KR', sans-serif; }
+    
+    .flow-container {
+      position: relative;
+      overflow: auto;
+      background: 
+        radial-gradient(circle at 20% 20%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
+        #0f172a;
+    }
+    
+    .flow-canvas {
+      min-width: 100%;
+      min-height: 100%;
+      background-image: radial-gradient(circle, #334155 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+    
+    .node {
+      position: absolute;
+      min-width: 180px;
+      max-width: 220px;
+      border-radius: 12px;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+    
+    .node:hover {
+      transform: scale(1.05);
+    }
+    
+    .node.selected {
+      transform: scale(1.05);
+      box-shadow: 0 0 30px rgba(96, 165, 250, 0.5);
+    }
+    
+    .edge-line {
+      position: absolute;
+      height: 3px;
+      transform-origin: left center;
+      pointer-events: none;
+    }
+    
+    .edge-label {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      padding: 8px 12px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 12px;
+      z-index: 10;
+    }
+    
+    .pulse-dot {
+      animation: pulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    @keyframes flowAnim {
+      0% { background-position: 0 0; }
+      100% { background-position: 20px 0; }
+    }
+    
+    .animated-edge {
+      background: repeating-linear-gradient(
+        90deg,
+        #60a5fa 0px,
+        #60a5fa 5px,
+        transparent 5px,
+        transparent 10px
+      );
+      animation: flowAnim 0.5s linear infinite;
+    }
+    
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #1e293b; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+  </style>
+</head>
+<body class="dark">
+  <div id="app" class="h-screen flex flex-col bg-slate-950">
+    <!-- 배경 -->
+    <div class="fixed inset-0 -z-10">
+      <div class="absolute inset-0 bg-gradient-to-br from-blue-900/20 via-slate-900 to-purple-900/20"></div>
+      <div class="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
+      <div class="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
+    </div>
+
+    <!-- 툴바 -->
+    <header class="h-16 bg-slate-900 border-b border-slate-700 flex items-center justify-between px-6 shrink-0">
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <span class="text-xl">🔀</span>
+          </div>
+          <div>
+            <h1 class="text-lg font-bold text-white">ISO20022 Flow Visualizer</h1>
+            <p class="text-xs text-slate-500">SWIFT Payment Message Visualization</p>
+          </div>
+        </div>
+        <div id="status-badge" class="hidden sm:flex items-center gap-2 ml-4 px-3 py-1.5 bg-green-500/10 border border-green-500/30 rounded-full">
+          <div class="w-2 h-2 bg-green-500 rounded-full pulse-dot"></div>
+          <span class="text-green-400 text-xs font-medium">데이터 로드됨</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="handleReset()" id="reset-btn" class="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+          <span>🔄</span>
+          <span class="hidden md:inline">초기화</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 메인 -->
+    <main class="flex-1 flex overflow-hidden">
+      <!-- 좌측 패널 -->
+      <aside id="left-panel" class="w-96 bg-slate-900/95 backdrop-blur-sm border-r border-slate-700 flex flex-col shrink-0">
+        <div class="p-4 flex flex-col h-full">
+          <!-- 헤더 -->
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
+              <span>📝</span> XML 입력
+            </h3>
+            <div class="flex gap-2">
+              <button onclick="loadSample()" class="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-all flex items-center gap-1.5">
+                <span>🎯</span>
+                <span>샘플 로드</span>
+              </button>
+              <button onclick="clearInput()" class="px-3 py-1.5 text-xs rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium transition-all">
+                지우기
+              </button>
+            </div>
+          </div>
+          
+          <!-- XML 텍스트 입력 영역 -->
+          <div class="flex-1 flex flex-col min-h-0">
+            <textarea 
+              id="xml-input" 
+              class="flex-1 w-full p-4 bg-slate-800 border border-slate-600 rounded-xl text-slate-300 font-mono text-xs leading-relaxed resize-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all placeholder-slate-500"
+              placeholder="여기에 ISO20022 XML을 붙여넣으세요...
+
+예시:
+<?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?>
+<Document xmlns=&quot;urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08&quot;>
+  <FIToFICstmrCdtTrf>
+    ...
+  </FIToFICstmrCdtTrf>
+</Document>"
+              spellcheck="false"
+            ></textarea>
+          </div>
+          
+          <!-- 분석 버튼 -->
+          <button onclick="analyzeXml()" class="mt-3 w-full py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-medium transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 hover:scale-[1.02]">
+            <span>🔍</span>
+            <span>다이어그램 생성</span>
+          </button>
+          
+          <!-- 지원 메시지 유형 -->
+          <div class="mt-3 p-3 bg-slate-800/50 rounded-xl border border-slate-700">
+            <h4 class="text-slate-400 text-xs font-medium mb-2 flex items-center gap-2">
+              <span>💡</span> 지원 메시지 유형
+            </h4>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="px-2 py-0.5 bg-slate-700/50 rounded text-xs text-slate-400 font-mono">pacs.008</span>
+              <span class="px-2 py-0.5 bg-slate-700/50 rounded text-xs text-slate-400 font-mono">pacs.009</span>
+              <span class="px-2 py-0.5 bg-slate-700/50 rounded text-xs text-slate-400 font-mono">camt.056</span>
+              <span class="px-2 py-0.5 bg-slate-700/50 rounded text-xs text-slate-400 font-mono">camt.029</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 에러 메시지 -->
+        <div id="error-msg" class="hidden mx-4 mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+          <div class="flex items-start gap-3">
+            <span class="text-red-400 text-xl">⚠️</span>
+            <div>
+              <h4 class="text-red-400 font-medium mb-1">파싱 오류</h4>
+              <p id="error-text" class="text-red-300/80 text-sm"></p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 중앙 캔버스 -->
+      <section class="flex-1 flow-container relative">
+        <div id="flow-canvas" class="flow-canvas absolute inset-0">
+          <!-- 빈 상태 -->
+          <div id="empty-state" class="h-full flex flex-col items-center justify-center">
+            <div class="text-center p-8">
+              <div class="relative mb-6">
+                <div class="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/30 flex items-center justify-center">
+                  <span class="text-4xl pulse-dot">🔄</span>
+                </div>
+                <div class="absolute -bottom-2 left-1/2 -translate-x-1/2 w-32 h-2 bg-gradient-to-r from-transparent via-blue-500/30 to-transparent blur-sm"></div>
+              </div>
+              <h3 class="text-xl font-semibold text-slate-300 mb-2">다이어그램을 생성하려면</h3>
+              <p class="text-slate-500 mb-6">왼쪽 패널에서 XML 파일을 업로드하거나<br>샘플 데이터를 불러오세요</p>
+              <div class="flex items-center justify-center gap-2 text-slate-600">
+                <span class="text-2xl">👤</span>
+                <span class="text-blue-500">→</span>
+                <span class="text-2xl">🏦</span>
+                <span class="text-blue-500">→</span>
+                <span class="text-2xl">🏛️</span>
+                <span class="text-blue-500">→</span>
+                <span class="text-2xl">🏦</span>
+                <span class="text-blue-500">→</span>
+                <span class="text-2xl">👤</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 다이어그램 (동적 생성) -->
+          <div id="diagram" class="hidden relative" style="min-height: 400px;"></div>
+        </div>
+        
+        <!-- 통계 카드 열기 버튼 (카드가 닫혀있을 때 표시) -->
+        <button id="stats-card-open-btn" class="hidden absolute top-4 left-4 p-2.5 bg-slate-800/95 backdrop-blur-sm border border-slate-700 rounded-lg shadow-xl z-20 hover:bg-slate-700 transition-all group" onclick="toggleStatsCard(true)" title="거래 정보 열기">
+          <div class="flex items-center gap-2">
+            <span class="text-lg">📊</span>
+            <span class="text-xs text-slate-400 group-hover:text-slate-200 font-medium">거래 정보</span>
+            <svg class="w-4 h-4 text-slate-500 group-hover:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+            </svg>
+          </div>
+        </button>
+        
+        <!-- 통계 플로팅 카드 (드래그 가능) -->
+        <div id="stats-card" class="hidden absolute bg-slate-800/95 backdrop-blur-sm border border-slate-700 rounded-xl shadow-xl z-20" style="top: 16px; left: 16px; max-width: 280px;">
+          <!-- 드래그 핸들 -->
+          <div id="stats-card-handle" class="flex items-center justify-between px-3 py-2 border-b border-slate-700 cursor-move bg-slate-700/50 rounded-t-xl">
+            <div class="flex items-center gap-2">
+              <span class="text-slate-500 text-xs">⋮⋮</span>
+              <span class="text-xs text-slate-400 font-medium">📊 거래 정보</span>
+            </div>
+            <button onclick="toggleStatsCard(false)" class="p-1 rounded hover:bg-slate-600 text-slate-500 hover:text-slate-200 transition-all" title="닫기">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+            </button>
+          </div>
+          <div id="stats-card-content" class="p-4">
+            <div class="text-xs text-slate-500 mb-1">Message ID</div>
+            <div id="stats-msgid" class="text-sm text-white font-mono mb-3">-</div>
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-2xl">💵</span>
+              <span id="stats-amount" class="text-xl font-bold text-white">-</span>
+            </div>
+            <!-- 국가 조합 배지 -->
+            <div id="country-flow-badge" class="hidden">
+              <div class="text-xs text-slate-500 mb-1.5">국가 플로우</div>
+              <div id="country-flow-display" class="flex items-center gap-1.5 flex-wrap"></div>
+            </div>
+            <!-- 고위험국 경고 -->
+            <div id="high-risk-alert" class="hidden mt-3 p-2.5 bg-red-500/20 border border-red-500/50 rounded-lg">
+              <div class="flex items-center gap-2">
+                <span class="text-lg">⚠️</span>
+                <div>
+                  <div class="text-red-400 text-xs font-semibold">High-Risk Country Detected</div>
+                  <div id="high-risk-countries" class="text-red-300 text-xs mt-0.5"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 범례 -->
+        <div class="absolute bottom-4 left-4 p-3 bg-slate-800/90 backdrop-blur-sm border border-slate-700 rounded-xl z-20">
+          <div class="text-xs text-slate-400 mb-2 font-medium">범례</div>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex items-center gap-2">
+              <div class="w-6 h-0.5 bg-blue-400"></div>
+              <span class="text-xs text-slate-500">pacs.008 메시지</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="w-6 h-0.5 border-t-2 border-dashed border-green-400"></div>
+              <span class="text-xs text-slate-500">Credit Received</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 우측 패널 토글 버튼 -->
+      <button 
+        onclick="toggleRightPanel()" 
+        id="right-panel-toggle"
+        class="absolute right-0 top-1/2 -translate-y-1/2 z-30 w-6 h-16 bg-slate-800 hover:bg-slate-700 border border-slate-600 border-r-0 rounded-l-lg flex items-center justify-center text-slate-400 hover:text-white transition-all shadow-lg"
+        style="right: 0px;"
+        title="패널 열기/닫기"
+      >
+        <span id="toggle-icon">←</span>
+      </button>
+
+      <!-- 우측 패널 -->
+      <aside id="right-panel" class="bg-slate-900 flex flex-col shrink-0 transition-all duration-300" style="width: 0px; min-width: 0px; border-left: none;">
+        <!-- 패널 헤더 -->
+        <div class="flex items-center justify-between px-4 py-2 border-b border-slate-700 bg-slate-800/50">
+          <span class="text-sm font-medium text-slate-300">상세 정보</span>
+          <button onclick="toggleRightPanel()" class="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-all" title="패널 닫기">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        
+        <!-- 탭 -->
+        <div class="flex border-b border-slate-700 shrink-0 overflow-x-auto">
+          <button onclick="setTab('info')" class="tab-btn flex-1 py-3 px-4 text-sm font-medium transition-all text-blue-400 border-b-2 border-blue-400 bg-slate-800/50 whitespace-nowrap" data-tab="info">
+            <span class="mr-1">📊</span>정보
+          </button>
+          <button onclick="setTab('risk')" class="tab-btn flex-1 py-3 px-4 text-sm font-medium transition-all text-slate-500 hover:text-slate-300 hover:bg-slate-800/30 whitespace-nowrap" data-tab="risk">
+            <span class="mr-1">⚠️</span>리스크
+          </button>
+          <button onclick="setTab('details')" class="tab-btn flex-1 py-3 px-4 text-sm font-medium transition-all text-slate-500 hover:text-slate-300 hover:bg-slate-800/30 whitespace-nowrap" data-tab="details">
+            <span class="mr-1">🔍</span>상세
+          </button>
+        </div>
+        
+        <!-- 탭 내용 -->
+        <div id="panel-content" class="flex-1 overflow-auto">
+          <!-- 정보 탭 -->
+          <div id="tab-info" class="p-4 space-y-4">
+            <div id="info-empty" class="h-full flex flex-col items-center justify-center py-12 text-center">
+              <div class="text-4xl mb-4 opacity-50">📊</div>
+              <h4 class="text-slate-400 font-medium mb-2">데이터 없음</h4>
+              <p class="text-slate-600 text-sm max-w-[200px]">XML을 입력하면 여기에 정보가 표시됩니다.</p>
+            </div>
+            <div id="info-content" class="hidden space-y-4">
+              <!-- 거래 요약 -->
+              <div class="p-4 bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-blue-500/30 rounded-xl">
+                <h3 class="text-sm font-semibold text-blue-400 mb-3 flex items-center gap-2">
+                  <span>💰</span> 거래 요약
+                </h3>
+                <div id="info-amount" class="text-2xl font-bold text-white mb-1">-</div>
+                <div id="info-parties" class="text-sm text-slate-400">-</div>
+              </div>
+              
+              <!-- 메시지 정보 -->
+              <div class="space-y-3">
+                <h3 class="text-sm font-semibold text-slate-400 flex items-center gap-2">
+                  <span>📋</span> 메시지 정보
+                </h3>
+                <div class="flex justify-between items-center p-2 bg-slate-800/50 rounded-lg">
+                  <span class="text-slate-500 text-sm">Message ID</span>
+                  <span id="info-msgid" class="text-slate-200 text-sm font-mono truncate ml-2 max-w-[150px]">-</span>
+                </div>
+                <div class="flex justify-between items-center p-2 bg-slate-800/50 rounded-lg">
+                  <span class="text-slate-500 text-sm">생성 시간</span>
+                  <span id="info-datetime" class="text-slate-200 text-sm font-mono truncate ml-2 max-w-[150px]">-</span>
+                </div>
+              </div>
+              
+              <!-- 참여자 -->
+              <div id="participants-list" class="space-y-3">
+                <h3 class="text-sm font-semibold text-slate-400 flex items-center gap-2">
+                  <span>👥</span> 참여자
+                </h3>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 리스크 탭 -->
+          <div id="tab-risk" class="hidden p-4">
+            <div id="risk-empty" class="h-full flex flex-col items-center justify-center py-12 text-center">
+              <div class="text-4xl mb-4 opacity-50">⚠️</div>
+              <h4 class="text-slate-400 font-medium mb-2">데이터 없음</h4>
+              <p class="text-slate-600 text-sm max-w-[200px]">XML을 입력하면 리스크 분석이 표시됩니다.</p>
+            </div>
+            <div id="risk-content" class="hidden space-y-4">
+              <!-- 국가 플로우 -->
+              <div class="p-4 bg-slate-800/50 border border-slate-700 rounded-xl">
+                <h3 class="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                  <span>🌍</span> 국가 플로우
+                </h3>
+                <div id="risk-country-flow" class="flex items-center gap-2 flex-wrap text-lg mb-2"></div>
+                <div id="risk-country-names" class="text-xs text-slate-500"></div>
+              </div>
+              
+              <!-- 리스크 상태 -->
+              <div id="risk-status-card" class="p-4 rounded-xl">
+                <div class="flex items-center gap-3">
+                  <div id="risk-status-icon" class="text-3xl"></div>
+                  <div>
+                    <div id="risk-status-title" class="font-semibold"></div>
+                    <div id="risk-status-desc" class="text-sm mt-1"></div>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 상세 분석 -->
+              <div class="space-y-3">
+                <h3 class="text-sm font-semibold text-slate-400 flex items-center gap-2">
+                  <span>📋</span> 상세 분석
+                </h3>
+                <div class="flex justify-between items-center p-2 bg-slate-800/50 rounded-lg">
+                  <span class="text-slate-500 text-sm">Cross-border 거래</span>
+                  <span id="risk-crossborder" class="text-sm font-medium"></span>
+                </div>
+                <div class="flex justify-between items-center p-2 bg-slate-800/50 rounded-lg">
+                  <span class="text-slate-500 text-sm">고위험국 포함</span>
+                  <span id="risk-highrisk" class="text-sm font-medium"></span>
+                </div>
+                <div id="risk-highrisk-list" class="hidden p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                  <div class="text-xs text-red-400 font-medium mb-2">⚠️ 고위험국가 목록</div>
+                  <div id="risk-highrisk-countries" class="text-sm text-red-300"></div>
+                </div>
+              </div>
+              
+              <!-- 노드별 국가 정보 -->
+              <div class="space-y-3">
+                <h3 class="text-sm font-semibold text-slate-400 flex items-center gap-2">
+                  <span>🏷️</span> 노드별 국가
+                </h3>
+                <div id="risk-node-countries" class="space-y-2"></div>
+              </div>
+              
+              <!-- 안내 문구 -->
+              <div class="p-3 bg-slate-800/30 rounded-lg border border-slate-700/50">
+                <p class="text-xs text-slate-500 leading-relaxed">
+                  💡 고위험국가 기준: FATF 고위험국, 제재대상국 등 내부 리스크 정책에 따라 정의됩니다. 
+                  실제 업무에서는 컴플라이언스 부서의 최신 리스트를 참조하세요.
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 상세 탭 -->
+          <div id="tab-details" class="hidden">
+            <div id="details-empty" class="h-full flex flex-col items-center justify-center py-12 text-center p-4">
+              <div class="text-4xl mb-4 opacity-50">🔍</div>
+              <h4 class="text-slate-400 font-medium mb-2">선택 없음</h4>
+              <p class="text-slate-600 text-sm max-w-[200px]">다이어그램에서 노드를 클릭하면 상세 정보가 표시됩니다.</p>
+            </div>
+            <div id="details-content" class="hidden">
+              <!-- 서브 탭 -->
+              <div class="flex border-b border-slate-700 bg-slate-800/30">
+                <button onclick="setSubTab('basic')" class="sub-tab-btn flex-1 py-2.5 px-3 text-xs font-medium transition-all text-blue-400 border-b-2 border-blue-400 bg-slate-800/50" data-subtab="basic">
+                  🔍 기본정보
+                </button>
+                <button onclick="setSubTab('mt')" class="sub-tab-btn flex-1 py-2.5 px-3 text-xs font-medium transition-all text-slate-500 hover:text-slate-300 hover:bg-slate-800/30" data-subtab="mt">
+                  🔄 MT매핑
+                </button>
+                <button onclick="setSubTab('xml')" class="sub-tab-btn flex-1 py-2.5 px-3 text-xs font-medium transition-all text-slate-500 hover:text-slate-300 hover:bg-slate-800/30" data-subtab="xml">
+                  📝 XML
+                </button>
+              </div>
+              
+              <!-- 기본 정보 서브탭 -->
+              <div id="subtab-basic" class="p-4 space-y-4"></div>
+              
+              <!-- MT매핑 서브탭 -->
+              <div id="subtab-mt" class="hidden p-4 space-y-4">
+                <div id="mt-node-info" class="p-3 bg-slate-800/50 border border-slate-700 rounded-xl">
+                  <div class="text-xs text-slate-500 mb-1">현재 선택 노드</div>
+                  <div id="mt-node-label" class="text-lg font-semibold text-white flex items-center gap-2"></div>
+                </div>
+                <div class="space-y-3">
+                  <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                    <span>📋</span> ISO20022 ↔ MT103 매핑
+                  </h3>
+                  <div id="mt-mapping-table" class="space-y-2"></div>
+                </div>
+                <div class="p-3 bg-amber-500/10 rounded-lg border border-amber-500/30">
+                  <p class="text-xs text-amber-400/80 leading-relaxed">
+                    ⚠️ 예시 매핑이며, 실제 운영 매핑은 은행별로 상이할 수 있습니다.
+                  </p>
+                </div>
+              </div>
+              
+              <!-- XML 서브탭 -->
+              <div id="subtab-xml" class="hidden p-4">
+                <div class="mb-3 flex items-center justify-between">
+                  <span class="text-sm font-medium text-slate-300">선택된 노드 XML</span>
+                </div>
+                <pre id="xml-node-content" class="text-xs text-slate-300 bg-slate-800 p-4 rounded-xl overflow-auto max-h-[calc(100vh-350px)] font-mono leading-relaxed"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- 푸터 -->
+    <footer class="h-10 bg-slate-900 border-t border-slate-700 flex items-center justify-center px-4 shrink-0">
+      <p class="text-slate-600 text-xs">ISO20022 Flow Visualizer • Standalone Version • 2024</p>
+    </footer>
+  </div>
+
+  <script>
+    // 상태
+    let xmlContent = '';
+    let parsedData = null;
+    let selectedNode = null;
+    let currentTab = 'info';
+    let rightPanelOpen = false;
+
+    // 드래그 기능 초기화
+    document.addEventListener('DOMContentLoaded', function() {
+      initDraggable('stats-card', 'stats-card-handle');
+    });
+    
+    // 거래 정보 카드 토글
+    let statsCardVisible = true;
+    
+    function toggleStatsCard(show) {
+      statsCardVisible = show;
+      const card = document.getElementById('stats-card');
+      const openBtn = document.getElementById('stats-card-open-btn');
+      
+      if (show) {
+        card.classList.remove('hidden');
+        openBtn.classList.add('hidden');
+      } else {
+        card.classList.add('hidden');
+        openBtn.classList.remove('hidden');
+      }
+    }
+    
+    function initDraggable(cardId, handleId) {
+      const card = document.getElementById(cardId);
+      const handle = document.getElementById(handleId);
+      if (!card || !handle) return;
+      
+      let isDragging = false;
+      let startX, startY, startLeft, startTop;
+      
+      handle.addEventListener('mousedown', function(e) {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = card.offsetLeft;
+        startTop = card.offsetTop;
+        card.style.transition = 'none';
+        e.preventDefault();
+      });
+      
+      document.addEventListener('mousemove', function(e) {
+        if (!isDragging) return;
+        
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        
+        let newLeft = startLeft + dx;
+        let newTop = startTop + dy;
+        
+        // 화면 경계 체크
+        const container = card.parentElement;
+        const maxLeft = container.clientWidth - card.offsetWidth - 10;
+        const maxTop = container.clientHeight - card.offsetHeight - 10;
+        
+        newLeft = Math.max(10, Math.min(newLeft, maxLeft));
+        newTop = Math.max(10, Math.min(newTop, maxTop));
+        
+        card.style.left = newLeft + 'px';
+        card.style.top = newTop + 'px';
+        card.style.right = 'auto';
+      });
+      
+      document.addEventListener('mouseup', function() {
+        if (isDragging) {
+          isDragging = false;
+          card.style.transition = '';
+        }
+      });
+      
+      // 터치 지원
+      handle.addEventListener('touchstart', function(e) {
+        isDragging = true;
+        const touch = e.touches[0];
+        startX = touch.clientX;
+        startY = touch.clientY;
+        startLeft = card.offsetLeft;
+        startTop = card.offsetTop;
+        card.style.transition = 'none';
+      }, { passive: true });
+      
+      document.addEventListener('touchmove', function(e) {
+        if (!isDragging) return;
+        
+        const touch = e.touches[0];
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        
+        let newLeft = startLeft + dx;
+        let newTop = startTop + dy;
+        
+        const container = card.parentElement;
+        const maxLeft = container.clientWidth - card.offsetWidth - 10;
+        const maxTop = container.clientHeight - card.offsetHeight - 10;
+        
+        newLeft = Math.max(10, Math.min(newLeft, maxLeft));
+        newTop = Math.max(10, Math.min(newTop, maxTop));
+        
+        card.style.left = newLeft + 'px';
+        card.style.top = newTop + 'px';
+        card.style.right = 'auto';
+      }, { passive: true });
+      
+      document.addEventListener('touchend', function() {
+        if (isDragging) {
+          isDragging = false;
+          card.style.transition = '';
+        }
+      });
+    }
+
+    // 고위험국가 리스트
+    const HIGH_RISK_COUNTRIES = ['IR', 'KP', 'SY', 'SD', 'CU', 'VE', 'MM', 'BY', 'RU'];
+    
+    // 국가 이름 매핑
+    const COUNTRY_NAMES = {
+      'IR': '이란', 'KP': '북한', 'SY': '시리아', 'SD': '수단', 'CU': '쿠바',
+      'VE': '베네수엘라', 'MM': '미얀마', 'BY': '벨라루스', 'RU': '러시아',
+      'DE': '독일', 'US': '미국', 'KR': '한국', 'RO': '루마니아', 'GB': '영국',
+      'JP': '일본', 'CN': '중국', 'FR': '프랑스', 'SG': '싱가포르'
+    };
+    
+    // 국기 이모지 매핑
+    const COUNTRY_FLAGS = {
+      'IR': '🇮🇷', 'KP': '🇰🇵', 'SY': '🇸🇾', 'SD': '🇸🇩', 'CU': '🇨🇺',
+      'VE': '🇻🇪', 'MM': '🇲🇲', 'BY': '🇧🇾', 'RU': '🇷🇺',
+      'DE': '🇩🇪', 'US': '🇺🇸', 'KR': '🇰🇷', 'RO': '🇷🇴', 'GB': '🇬🇧',
+      'JP': '🇯🇵', 'CN': '🇨🇳', 'FR': '🇫🇷', 'SG': '🇸🇬'
+    };
+    
+    // MT103 매핑 정보
+    const MT_MAPPING = {
+      messageId: { xpath: '/GrpHdr/MsgId', mtTag: ':20', desc: 'Transaction Reference Number' },
+      amount: { xpath: '/CdtTrfTxInf/IntrBkSttlmAmt', mtTag: ':32A', desc: 'Value Date/Currency/Amount' },
+      debtor: {
+        name: { xpath: '/CdtTrfTxInf/Dbtr/Nm', mtTag: ':50K', desc: 'Ordering Customer - Name' },
+        address: { xpath: '/CdtTrfTxInf/Dbtr/PstlAdr/...', mtTag: ':50K', desc: 'Ordering Customer - Address' },
+        country: { xpath: '/CdtTrfTxInf/Dbtr/PstlAdr/Ctry', mtTag: ':50K', desc: 'Ordering Customer - Country' }
+      },
+      debtorAgent: {
+        bic: { xpath: '/CdtTrfTxInf/DbtrAgt/FinInstnId/BICFI', mtTag: ':52A', desc: 'Ordering Institution' },
+        name: { xpath: '/CdtTrfTxInf/DbtrAgt/FinInstnId/Nm', mtTag: ':52A', desc: 'Ordering Institution Name' }
+      },
+      intermediary1: {
+        bic: { xpath: '/CdtTrfTxInf/IntrmyAgt1/FinInstnId/BICFI', mtTag: ':56A', desc: 'Intermediary Institution' },
+        name: { xpath: '/CdtTrfTxInf/IntrmyAgt1/FinInstnId/Nm', mtTag: ':56A', desc: 'Intermediary Name' }
+      },
+      creditorAgent: {
+        bic: { xpath: '/CdtTrfTxInf/CdtrAgt/FinInstnId/BICFI', mtTag: ':57A', desc: 'Account With Institution' },
+        name: { xpath: '/CdtTrfTxInf/CdtrAgt/FinInstnId/Nm', mtTag: ':57A', desc: 'Account With Institution Name' }
+      },
+      creditor: {
+        name: { xpath: '/CdtTrfTxInf/Cdtr/Nm', mtTag: ':59', desc: 'Beneficiary Customer - Name' },
+        address: { xpath: '/CdtTrfTxInf/Cdtr/PstlAdr/...', mtTag: ':59', desc: 'Beneficiary - Address' },
+        country: { xpath: '/CdtTrfTxInf/Cdtr/PstlAdr/Ctry', mtTag: ':59', desc: 'Beneficiary - Country' }
+      }
+    };
+
+    // 샘플 XML (고위험국 케이스: DE → US → IR)
+    const sampleXml = `<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08">
+  <FIToFICstmrCdtTrf>
+    <GrpHdr>
+      <MsgId>SHBEU-20231205-HR001</MsgId>
+      <CreDtTm>2023-12-05T14:30:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+    </GrpHdr>
+    <CdtTrfTxInf>
+      <PmtId>
+        <InstrId>INSTR-HR-001</InstrId>
+        <EndToEndId>E2E-HIGHRISK-001</EndToEndId>
+        <TxId>TXN-20231205-HR001</TxId>
+      </PmtId>
+      <IntrBkSttlmAmt Ccy="USD">150000.00</IntrBkSttlmAmt>
+      <Dbtr>
+        <Nm>KIM YONGSU</Nm>
+        <PstlAdr>
+          <TwnNm>Frankfurt</TwnNm>
+          <Ctry>DE</Ctry>
+        </PstlAdr>
+      </Dbtr>
+      <DbtrAgt>
+        <FinInstnId>
+          <BICFI>SHBKDEFFXXX</BICFI>
+          <Nm>Shinhan Bank Europe GmbH</Nm>
+        </FinInstnId>
+      </DbtrAgt>
+      <IntrmyAgt1>
+        <FinInstnId>
+          <BICFI>CITIUS33XXX</BICFI>
+          <Nm>Citibank N.A.</Nm>
+        </FinInstnId>
+      </IntrmyAgt1>
+      <CdtrAgt>
+        <FinInstnId>
+          <BICFI>ABORIRTEXXX</BICFI>
+          <Nm>Bank Melli Iran</Nm>
+        </FinInstnId>
+      </CdtrAgt>
+      <Cdtr>
+        <Nm>ALIREZA TRADING CO.</Nm>
+        <PstlAdr>
+          <TwnNm>Tehran</TwnNm>
+          <Ctry>IR</Ctry>
+        </PstlAdr>
+      </Cdtr>
+    </CdtTrfTxInf>
+  </FIToFICstmrCdtTrf>
+</Document>`;
+
+    // 노드 설정
+    const nodeConfig = {
+      debtor: { label: 'Debtor', icon: '👤', bg: '#0c4a6e', border: '#0ea5e9' },
+      debtorAgent: { label: 'Debtor Agent', icon: '🏦', bg: '#1e3a5f', border: '#3b82f6' },
+      intermediary1: { label: 'Intermediary 1', icon: '🏛️', bg: '#312e81', border: '#6366f1' },
+      creditorAgent: { label: 'Creditor Agent', icon: '🏦', bg: '#065f46', border: '#10b981' },
+      creditor: { label: 'Creditor', icon: '👤', bg: '#064e3b', border: '#14b8a6' },
+    };
+
+    // XML 입력 관련 함수
+    const xmlInput = document.getElementById('xml-input');
+
+    function loadSample() {
+      xmlInput.value = sampleXml;
+      analyzeXml();
+    }
+
+    function clearInput() {
+      xmlInput.value = '';
+      handleReset();
+    }
+
+    function analyzeXml() {
+      const xml = xmlInput.value.trim();
+      if (!xml) {
+        showError('XML을 입력해주세요.');
+        return;
+      }
+      processXml(xml);
+    }
+
+    // Enter키로 분석 (Ctrl+Enter)
+    xmlInput.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        analyzeXml();
+      }
+    });
+
+    function processXml(xml) {
+      hideError();
+      xmlContent = xml;
+      
+      try {
+        parsedData = parseXml(xml);
+        renderDiagram();
+        updateInfoPanel();
+        updateCountryFlowBadge();
+        updateRiskPanel();
+        
+        document.getElementById('status-badge').classList.remove('hidden');
+        document.getElementById('reset-btn').disabled = false;
+        
+        // 통계 카드 표시 (이전 상태 유지)
+        if (statsCardVisible) {
+          document.getElementById('stats-card').classList.remove('hidden');
+          document.getElementById('stats-card-open-btn').classList.add('hidden');
+        } else {
+          document.getElementById('stats-card').classList.add('hidden');
+          document.getElementById('stats-card-open-btn').classList.remove('hidden');
+        }
+        
+        document.getElementById('stats-msgid').textContent = parsedData.messageId;
+        document.getElementById('stats-amount').textContent = `${parsedData.currency} ${formatAmount(parsedData.amount)}`;
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+    
+    // 국가 플로우 배지 업데이트
+    function updateCountryFlowBadge() {
+      const badge = document.getElementById('country-flow-badge');
+      const display = document.getElementById('country-flow-display');
+      const alert = document.getElementById('high-risk-alert');
+      const alertCountries = document.getElementById('high-risk-countries');
+      
+      if (!parsedData || !parsedData.countryAnalysis) {
+        badge.classList.add('hidden');
+        alert.classList.add('hidden');
+        return;
+      }
+      
+      const analysis = parsedData.countryAnalysis;
+      badge.classList.remove('hidden');
+      
+      // 국가 플로우 표시
+      display.innerHTML = analysis.flow.map((country, idx) => {
+        const isHighRisk = isHighRiskCountry(country);
+        const flag = COUNTRY_FLAGS[country] || '🏳️';
+        const bgClass = isHighRisk ? 'bg-red-500/20 border-red-500/50 text-red-300' : 'bg-slate-700/50 border-slate-600 text-slate-300';
+        return `
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border ${bgClass}">
+            ${flag} ${country}
+          </span>
+          ${idx < analysis.flow.length - 1 ? '<span class="text-slate-500">→</span>' : ''}
+        `;
+      }).join('');
+      
+      // 고위험국 경고
+      if (analysis.hasHighRisk) {
+        alert.classList.remove('hidden');
+        alertCountries.textContent = analysis.highRiskCountries.map(c => 
+          `${COUNTRY_FLAGS[c] || ''} ${c} (${COUNTRY_NAMES[c] || c})`
+        ).join(', ');
+      } else {
+        alert.classList.add('hidden');
+      }
+    }
+    
+    // 리스크 패널 업데이트
+    function updateRiskPanel() {
+      if (!parsedData || !parsedData.countryAnalysis) {
+        document.getElementById('risk-empty').classList.remove('hidden');
+        document.getElementById('risk-content').classList.add('hidden');
+        return;
+      }
+      
+      document.getElementById('risk-empty').classList.add('hidden');
+      document.getElementById('risk-content').classList.remove('hidden');
+      
+      const analysis = parsedData.countryAnalysis;
+      
+      // 국가 플로우
+      const flowEl = document.getElementById('risk-country-flow');
+      flowEl.innerHTML = analysis.flow.map((country, idx) => {
+        const isHighRisk = isHighRiskCountry(country);
+        const flag = COUNTRY_FLAGS[country] || '🏳️';
+        return `
+          <span class="${isHighRisk ? 'text-red-400' : ''}">${flag}</span>
+          ${idx < analysis.flow.length - 1 ? '<span class="text-slate-500">→</span>' : ''}
+        `;
+      }).join('');
+      
+      document.getElementById('risk-country-names').textContent = 
+        analysis.flow.map(c => COUNTRY_NAMES[c] || c).join(' → ');
+      
+      // 리스크 상태 카드
+      const statusCard = document.getElementById('risk-status-card');
+      const statusIcon = document.getElementById('risk-status-icon');
+      const statusTitle = document.getElementById('risk-status-title');
+      const statusDesc = document.getElementById('risk-status-desc');
+      
+      if (analysis.hasHighRisk) {
+        statusCard.className = 'p-4 rounded-xl bg-red-500/10 border border-red-500/30';
+        statusIcon.textContent = '🚨';
+        statusTitle.className = 'font-semibold text-red-400';
+        statusTitle.textContent = '고위험 거래 감지';
+        statusDesc.className = 'text-sm mt-1 text-red-300/80';
+        statusDesc.textContent = `플로우 내에 고위험국가(${analysis.highRiskCountries.join(', ')})가 포함되어 있습니다. 수취은행 및 수취인 주소를 확인하세요.`;
+      } else {
+        statusCard.className = 'p-4 rounded-xl bg-green-500/10 border border-green-500/30';
+        statusIcon.textContent = '✅';
+        statusTitle.className = 'font-semibold text-green-400';
+        statusTitle.textContent = '정상 거래';
+        statusDesc.className = 'text-sm mt-1 text-green-300/80';
+        statusDesc.textContent = '고위험국가가 포함되지 않은 거래입니다.';
+      }
+      
+      // Cross-border 여부
+      document.getElementById('risk-crossborder').innerHTML = analysis.isCrossBorder 
+        ? '<span class="text-amber-400">Yes</span>' 
+        : '<span class="text-green-400">No</span>';
+      
+      // 고위험국 포함 여부
+      document.getElementById('risk-highrisk').innerHTML = analysis.hasHighRisk 
+        ? '<span class="text-red-400">Yes</span>' 
+        : '<span class="text-green-400">No</span>';
+      
+      // 고위험국 리스트
+      const hrList = document.getElementById('risk-highrisk-list');
+      if (analysis.hasHighRisk) {
+        hrList.classList.remove('hidden');
+        document.getElementById('risk-highrisk-countries').innerHTML = 
+          analysis.highRiskCountries.map(c => 
+            `<span class="inline-flex items-center gap-1">${COUNTRY_FLAGS[c] || ''} ${c} (${COUNTRY_NAMES[c] || c})</span>`
+          ).join(', ');
+      } else {
+        hrList.classList.add('hidden');
+      }
+      
+      // 노드별 국가 정보
+      const nodeCountries = document.getElementById('risk-node-countries');
+      const nodes = [
+        { key: 'debtor', label: '송금인 (Debtor)', icon: '👤' },
+        { key: 'debtorAgent', label: '송신은행 (Debtor Agent)', icon: '🏦' },
+        { key: 'intermediary1', label: '중계은행 (Intermediary)', icon: '🏛️' },
+        { key: 'creditorAgent', label: '수취은행 (Creditor Agent)', icon: '🏦' },
+        { key: 'creditor', label: '수취인 (Creditor)', icon: '👤' },
+      ];
+      
+      nodeCountries.innerHTML = nodes.map(node => {
+        const country = analysis.details[node.key];
+        if (!country) return '';
+        
+        const isHighRisk = isHighRiskCountry(country);
+        const flag = COUNTRY_FLAGS[country] || '🏳️';
+        const bgClass = isHighRisk 
+          ? 'bg-red-500/10 border-red-500/30' 
+          : 'bg-slate-800/50 border-slate-700';
+        const textClass = isHighRisk ? 'text-red-400' : 'text-slate-300';
+        
+        return `
+          <div class="flex justify-between items-center p-2 ${bgClass} border rounded-lg">
+            <span class="text-slate-400 text-sm flex items-center gap-2">
+              <span>${node.icon}</span>
+              ${node.label}
+            </span>
+            <span class="${textClass} text-sm font-medium flex items-center gap-1.5">
+              ${flag} ${country}
+              ${isHighRisk ? '<span class="text-red-500 text-xs">⚠️</span>' : ''}
+            </span>
+          </div>
+        `;
+      }).filter(Boolean).join('');
+    }
+    
+    // MT 매핑 패널 업데이트
+    function updateMtPanel(nodeType, nodeData, nodeConfig) {
+      // 선택된 노드 표시
+      const nodeLabelEl = document.getElementById('mt-node-label');
+      if (nodeLabelEl) {
+        nodeLabelEl.innerHTML = `
+          <span>${nodeConfig.icon}</span>
+          <span>${nodeConfig.label}</span>
+        `;
+      }
+      
+      // 매핑 정보 가져오기
+      const mappingKey = nodeType === 'intermediary1' ? 'intermediary1' : nodeType;
+      const mapping = MT_MAPPING[mappingKey];
+      
+      const tableEl = document.getElementById('mt-mapping-table');
+      if (!tableEl) return;
+      
+      if (!mapping) {
+        tableEl.innerHTML = '<div class="text-slate-500 text-sm">매핑 정보가 없습니다.</div>';
+        return;
+      }
+      
+      let rows = [];
+      
+      if (typeof mapping.xpath === 'string') {
+        // 단일 매핑
+        rows.push({ field: mappingKey, ...mapping });
+      } else {
+        // 다중 매핑
+        for (const [field, info] of Object.entries(mapping)) {
+          rows.push({ field, ...info });
+        }
+      }
+      
+      tableEl.innerHTML = `
+        <div class="overflow-hidden rounded-lg border border-slate-700">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-800">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">항목</th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">ISO20022</th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-slate-400">MT103</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-700">
+              ${rows.map(row => `
+                <tr class="bg-slate-800/30 hover:bg-slate-800/50 transition-colors">
+                  <td class="px-3 py-2 text-slate-300 text-xs">${row.desc}</td>
+                  <td class="px-3 py-2 text-blue-400 text-xs font-mono truncate max-w-[120px]" title="${row.xpath}">${row.xpath}</td>
+                  <td class="px-3 py-2 text-green-400 text-xs font-mono font-semibold">${row.mtTag}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // BIC에서 국가코드 추출 (5-6번째 문자)
+    function getCountryFromBIC(bic) {
+      if (!bic || bic.length < 6) return '';
+      return bic.substring(4, 6).toUpperCase();
+    }
+    
+    // 고위험국 여부 확인
+    function isHighRiskCountry(countryCode) {
+      return HIGH_RISK_COUNTRIES.includes(countryCode);
+    }
+    
+    // 국가 플로우 분석
+    function analyzeCountryFlow(data) {
+      const countries = [];
+      const countryDetails = {};
+      
+      // 송금인 국가
+      if (data.debtor.country) {
+        countries.push(data.debtor.country);
+        countryDetails.debtor = data.debtor.country;
+      }
+      // 송신은행 국가 (BIC에서)
+      if (data.debtorAgent.country) {
+        if (!countries.includes(data.debtorAgent.country)) {
+          countries.push(data.debtorAgent.country);
+        }
+        countryDetails.debtorAgent = data.debtorAgent.country;
+      }
+      // 중계은행 국가
+      if (data.intermediaryAgent1 && data.intermediaryAgent1.country) {
+        if (!countries.includes(data.intermediaryAgent1.country)) {
+          countries.push(data.intermediaryAgent1.country);
+        }
+        countryDetails.intermediary1 = data.intermediaryAgent1.country;
+      }
+      // 수취은행 국가
+      if (data.creditorAgent.country) {
+        if (!countries.includes(data.creditorAgent.country)) {
+          countries.push(data.creditorAgent.country);
+        }
+        countryDetails.creditorAgent = data.creditorAgent.country;
+      }
+      // 수취인 국가
+      if (data.creditor.country) {
+        if (!countries.includes(data.creditor.country)) {
+          countries.push(data.creditor.country);
+        }
+        countryDetails.creditor = data.creditor.country;
+      }
+      
+      const highRiskCountries = countries.filter(c => isHighRiskCountry(c));
+      
+      return {
+        flow: countries,
+        flowString: countries.join(' → '),
+        details: countryDetails,
+        hasHighRisk: highRiskCountries.length > 0,
+        highRiskCountries: highRiskCountries,
+        isCrossBorder: new Set(countries).size > 1
+      };
+    }
+
+    function parseXml(xml) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xml, 'text/xml');
+      
+      const getTextContent = (selector) => {
+        const el = doc.querySelector(selector);
+        return el ? el.textContent : '';
+      };
+      
+      const getAttr = (selector, attr) => {
+        const el = doc.querySelector(selector);
+        return el ? el.getAttribute(attr) : '';
+      };
+
+      // BIC 코드 추출
+      const debtorAgentBic = getTextContent('DbtrAgt > FinInstnId > BICFI') || '';
+      const intermediaryBic = getTextContent('IntrmyAgt1 > FinInstnId > BICFI') || '';
+      const creditorAgentBic = getTextContent('CdtrAgt > FinInstnId > BICFI') || '';
+
+      const data = {
+        messageId: getTextContent('MsgId') || 'Unknown',
+        creationDateTime: getTextContent('CreDtTm') || '',
+        debtor: {
+          name: getTextContent('Dbtr > Nm') || 'Debtor',
+          address: getTextContent('Dbtr > PstlAdr > TwnNm') || '',
+          country: getTextContent('Dbtr > PstlAdr > Ctry') || '',
+        },
+        debtorAgent: {
+          name: getTextContent('DbtrAgt > FinInstnId > Nm') || 'Debtor Agent',
+          bic: debtorAgentBic,
+          country: getCountryFromBIC(debtorAgentBic),
+        },
+        intermediaryAgent1: doc.querySelector('IntrmyAgt1') ? {
+          name: getTextContent('IntrmyAgt1 > FinInstnId > Nm') || 'Intermediary',
+          bic: intermediaryBic,
+          country: getCountryFromBIC(intermediaryBic),
+        } : null,
+        creditorAgent: {
+          name: getTextContent('CdtrAgt > FinInstnId > Nm') || 'Creditor Agent',
+          bic: creditorAgentBic,
+          country: getCountryFromBIC(creditorAgentBic),
+        },
+        creditor: {
+          name: getTextContent('Cdtr > Nm') || 'Creditor',
+          address: getTextContent('Cdtr > PstlAdr > TwnNm') || '',
+          country: getTextContent('Cdtr > PstlAdr > Ctry') || '',
+        },
+        amount: getTextContent('IntrBkSttlmAmt') || '0',
+        currency: getAttr('IntrBkSttlmAmt', 'Ccy') || 'USD',
+      };
+      
+      // 국가 플로우 분석 추가
+      data.countryAnalysis = analyzeCountryFlow(data);
+      
+      return data;
+    }
+
+    function renderDiagram() {
+      document.getElementById('empty-state').classList.add('hidden');
+      const diagram = document.getElementById('diagram');
+      diagram.classList.remove('hidden');
+      diagram.innerHTML = '';
+      
+      const participants = [];
+      if (parsedData.debtor) participants.push({ type: 'debtor', data: parsedData.debtor });
+      if (parsedData.debtorAgent) participants.push({ type: 'debtorAgent', data: parsedData.debtorAgent });
+      if (parsedData.intermediaryAgent1) participants.push({ type: 'intermediary1', data: parsedData.intermediaryAgent1 });
+      if (parsedData.creditorAgent) participants.push({ type: 'creditorAgent', data: parsedData.creditorAgent });
+      if (parsedData.creditor) participants.push({ type: 'creditor', data: parsedData.creditor });
+      
+      const nodeSpacing = 240;
+      const startX = 60;
+      const startY = 120;
+      
+      // 노드 렌더링
+      participants.forEach((p, i) => {
+        const config = nodeConfig[p.type];
+        const x = startX + i * nodeSpacing;
+        const node = createNode(p.type, p.data, config, x, startY, i === 0, i === participants.length - 1);
+        diagram.appendChild(node);
+      });
+      
+      // 엣지 렌더링
+      for (let i = 0; i < participants.length - 1; i++) {
+        const isFirst = i === 0;
+        const isLast = i === participants.length - 2;
+        const x1 = startX + i * nodeSpacing + 180;
+        const x2 = startX + (i + 1) * nodeSpacing;
+        const y = startY + 70;
+        
+        const edge = createEdge(x1, y, x2 - x1, isFirst, isLast);
+        diagram.appendChild(edge);
+      }
+      
+      diagram.style.width = (startX * 2 + participants.length * nodeSpacing) + 'px';
+      diagram.style.height = '350px';
+    }
+
+    function createNode(type, data, config, x, y, isFirst, isLast) {
+      const div = document.createElement('div');
+      div.className = 'node';
+      div.style.left = x + 'px';
+      div.style.top = y + 'px';
+      
+      // 국가 정보 확인
+      const country = data.country || '';
+      const isHighRisk = country && isHighRiskCountry(country);
+      const flag = COUNTRY_FLAGS[country] || '';
+      
+      // 고위험국인 경우 스타일 변경
+      const borderColor = isHighRisk ? '#ef4444' : config.border;
+      const bgColor = isHighRisk ? '#7f1d1d' : config.bg;
+      
+      div.style.background = `linear-gradient(135deg, ${bgColor} 0%, ${bgColor}ee 100%)`;
+      div.style.border = `2px solid ${borderColor}`;
+      div.style.boxShadow = isHighRisk 
+        ? `0 4px 20px rgba(239, 68, 68, 0.4), 0 0 30px rgba(239, 68, 68, 0.2)` 
+        : `0 4px 20px rgba(0,0,0,0.3)`;
+      
+      const countryBadge = country ? `
+        <div style="margin-top: 8px; display: flex; justify-content: center;">
+          <span style="
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 500;
+            ${isHighRisk 
+              ? 'background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.5); color: #fca5a5;' 
+              : `background: ${config.border}15; border: 1px solid ${config.border}40; color: ${config.border};`}
+          ">
+            ${flag} ${country}
+            ${isHighRisk ? ' <span style="color: #ef4444;">⚠️</span>' : ''}
+          </span>
+        </div>
+      ` : '';
+      
+      div.innerHTML = `
+        <div style="padding: 8px 12px; border-bottom: 1px solid ${borderColor}50; text-align: center;">
+          <span style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: ${borderColor};">${config.label}</span>
+        </div>
+        <div style="padding: 16px; text-align: center;">
+          <div style="width: 56px; height: 56px; margin: 0 auto 12px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; background: linear-gradient(135deg, ${borderColor}30 0%, ${borderColor}10 100%); border: 1px solid ${borderColor}50;">
+            ${config.icon}
+          </div>
+          <div style="color: white; font-weight: 500; font-size: 14px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${data.name}</div>
+          ${data.bic ? `<div style="font-size: 11px; font-family: 'JetBrains Mono', monospace; padding: 4px 8px; background: ${borderColor}20; color: ${borderColor}; border-radius: 6px; display: inline-block;">${data.bic}</div>` : ''}
+          ${countryBadge}
+        </div>
+        <div style="position: absolute; top: -4px; right: -4px; width: 12px; height: 12px; border-radius: 50%; background: ${borderColor};" class="pulse-dot"></div>
+        ${isHighRisk ? `<div style="position: absolute; top: -8px; left: -8px; font-size: 16px;">🚨</div>` : ''}
+      `;
+      
+      div.addEventListener('click', () => selectNode(type, data, config));
+      
+      return div;
+    }
+
+    function createEdge(x, y, width, isFirst, isLast) {
+      const container = document.createElement('div');
+      container.style.position = 'absolute';
+      container.style.left = x + 'px';
+      container.style.top = y + 'px';
+      container.style.width = width + 'px';
+      
+      const color = isLast ? '#10b981' : '#60a5fa';
+      const bgColor = isLast ? 'linear-gradient(135deg, #065f46 0%, #064e3b 100%)' : 'linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)';
+      
+      // 라인
+      const line = document.createElement('div');
+      line.className = isLast ? '' : 'animated-edge';
+      line.style.cssText = `
+        height: 3px;
+        background: ${isLast ? 'transparent' : ''};
+        ${isLast ? `border-top: 2px dashed ${color};` : ''}
+      `;
+      
+      // 화살표
+      const arrow = document.createElement('div');
+      arrow.style.cssText = `
+        position: absolute;
+        right: -6px;
+        top: -4px;
+        width: 0;
+        height: 0;
+        border-left: 8px solid ${color};
+        border-top: 5px solid transparent;
+        border-bottom: 5px solid transparent;
+      `;
+      
+      // 라벨
+      const label = document.createElement('div');
+      label.className = 'edge-label';
+      label.style.cssText = `
+        left: 50%;
+        top: -30px;
+        background: ${bgColor};
+        border: 1px solid ${color}60;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.4), 0 0 10px ${color}30;
+      `;
+      
+      let labelContent = `<div style="font-size: 11px; font-weight: 700; color: ${color};">${isLast ? 'Credit Received' : 'pacs.008'}</div>`;
+      if (isFirst) {
+        labelContent += `<div style="color: white; font-size: 11px; margin-top: 4px;">${parsedData.currency} ${formatAmount(parsedData.amount)}</div>`;
+      }
+      if (!isLast) {
+        labelContent += `<div style="font-size: 10px; margin-top: 4px; color: ${color};">→→→</div>`;
+      }
+      label.innerHTML = labelContent;
+      
+      container.appendChild(line);
+      container.appendChild(arrow);
+      container.appendChild(label);
+      
+      return container;
+    }
+
+    // 서브탭 전환
+    let currentSubTab = 'basic';
+    
+    function setSubTab(subtab) {
+      currentSubTab = subtab;
+      document.querySelectorAll('.sub-tab-btn').forEach(btn => {
+        if (btn.dataset.subtab === subtab) {
+          btn.className = 'sub-tab-btn flex-1 py-2.5 px-3 text-xs font-medium transition-all text-blue-400 border-b-2 border-blue-400 bg-slate-800/50';
+        } else {
+          btn.className = 'sub-tab-btn flex-1 py-2.5 px-3 text-xs font-medium transition-all text-slate-500 hover:text-slate-300 hover:bg-slate-800/30';
+        }
+      });
+      
+      document.getElementById('subtab-basic').classList.toggle('hidden', subtab !== 'basic');
+      document.getElementById('subtab-mt').classList.toggle('hidden', subtab !== 'mt');
+      document.getElementById('subtab-xml').classList.toggle('hidden', subtab !== 'xml');
+    }
+
+    function selectNode(type, data, config) {
+      selectedNode = { type, data, config };
+      
+      // 노드 선택 표시
+      document.querySelectorAll('.node').forEach(n => n.classList.remove('selected'));
+      event.currentTarget.classList.add('selected');
+      
+      // 패널이 닫혀있으면 열기
+      if (!rightPanelOpen) {
+        toggleRightPanel();
+      }
+      
+      // 상세 탭으로 이동
+      setTab('details');
+      
+      // 상세 내용 업데이트
+      const content = document.getElementById('details-content');
+      content.classList.remove('hidden');
+      document.getElementById('details-empty').classList.add('hidden');
+      
+      const xmlTagName = nodeToXmlTag[type] || type;
+      const country = data.country || '';
+      const isHighRisk = country && isHighRiskCountry(country);
+      const flag = COUNTRY_FLAGS[country] || '';
+      
+      // 기본 정보 서브탭
+      document.getElementById('subtab-basic').innerHTML = `
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+            <span>${config.icon}</span>
+            ${config.label}
+          </h3>
+          <button onclick="clearSelection()" class="text-slate-500 hover:text-slate-300 p-1">✕</button>
+        </div>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center p-2 bg-slate-800/50 rounded-lg">
+            <span class="text-slate-500 text-sm">이름</span>
+            <span class="text-slate-200 text-sm truncate ml-2">${data.name}</span>
+          </div>
+          ${data.bic ? `
+          <div class="flex justify-between items-center p-2 bg-slate-800/50 rounded-lg">
+            <span class="text-slate-500 text-sm">BIC</span>
+            <span class="text-slate-200 text-sm font-mono">${data.bic}</span>
+          </div>
+          ` : ''}
+          ${data.address ? `
+          <div class="flex justify-between items-center p-2 bg-slate-800/50 rounded-lg">
+            <span class="text-slate-500 text-sm">주소</span>
+            <span class="text-slate-200 text-sm">${data.address}</span>
+          </div>
+          ` : ''}
+          ${country ? `
+          <div class="flex justify-between items-center p-2 ${isHighRisk ? 'bg-red-500/10 border border-red-500/30' : 'bg-slate-800/50'} rounded-lg">
+            <span class="text-slate-500 text-sm">국가</span>
+            <span class="${isHighRisk ? 'text-red-400' : 'text-slate-200'} text-sm font-medium flex items-center gap-1.5">
+              ${flag} ${country} (${COUNTRY_NAMES[country] || country})
+              ${isHighRisk ? '<span class="text-red-500">⚠️</span>' : ''}
+            </span>
+          </div>
+          ` : ''}
+          <div class="flex justify-between items-center p-2 bg-slate-800/50 rounded-lg">
+            <span class="text-slate-500 text-sm">XML 경로</span>
+            <span class="text-slate-200 text-sm font-mono" style="color: ${config.border};">&lt;${xmlTagName}&gt;</span>
+          </div>
+        </div>
+        
+        ${isHighRisk ? `
+        <div class="mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+          <div class="flex items-center gap-2 text-red-400 text-sm">
+            <span>🚨</span>
+            <span class="font-medium">고위험국가 경고</span>
+          </div>
+          <p class="text-red-300/80 text-xs mt-1">이 노드는 고위험국가(${COUNTRY_NAMES[country] || country})에 위치해 있습니다.</p>
+        </div>
+        ` : ''}
+      `;
+      
+      // MT 매핑 서브탭 업데이트
+      updateMtPanel(type, data, config);
+      
+      // XML 서브탭 업데이트
+      updateNodeXmlPanel(type);
+      
+      // 기본 서브탭으로 설정
+      setSubTab('basic');
+    }
+    
+    // 노드 XML 패널 업데이트
+    function updateNodeXmlPanel(nodeType) {
+      const tagName = nodeToXmlTag[nodeType];
+      if (!tagName || !xmlContent) return;
+      
+      const openTag = `<${tagName}>`;
+      const closeTag = `</${tagName}>`;
+      
+      const startIdx = xmlContent.indexOf(openTag);
+      if (startIdx === -1) {
+        document.getElementById('xml-node-content').textContent = `해당 태그를 찾을 수 없습니다: <${tagName}>`;
+        return;
+      }
+      
+      const endIdx = xmlContent.indexOf(closeTag, startIdx);
+      if (endIdx === -1) {
+        document.getElementById('xml-node-content').textContent = `닫는 태그를 찾을 수 없습니다: </${tagName}>`;
+        return;
+      }
+      
+      const fullEndIdx = endIdx + closeTag.length;
+      const extractedXml = xmlContent.substring(startIdx, fullEndIdx);
+      const formattedXml = formatExtractedXml(extractedXml);
+      
+      document.getElementById('xml-node-content').textContent = formattedXml;
+    }
+
+    function clearSelection() {
+      selectedNode = null;
+      document.querySelectorAll('.node').forEach(n => n.classList.remove('selected'));
+      document.getElementById('details-content').classList.add('hidden');
+      document.getElementById('details-empty').classList.remove('hidden');
+      
+      // 서브탭 초기화
+      setSubTab('basic');
+    }
+
+    function toggleRightPanel() {
+      rightPanelOpen = !rightPanelOpen;
+      const panel = document.getElementById('right-panel');
+      const toggleBtn = document.getElementById('right-panel-toggle');
+      const toggleIcon = document.getElementById('toggle-icon');
+      
+      if (rightPanelOpen) {
+        // 패널 열기
+        panel.style.width = '384px';
+        panel.style.minWidth = '384px';
+        toggleBtn.style.right = '384px';
+        toggleIcon.textContent = '→';
+        panel.querySelectorAll(':scope > *:not(:first-child)').forEach(el => {
+          el.style.display = '';
+        });
+      } else {
+        // 패널 닫기
+        panel.style.width = '0px';
+        panel.style.minWidth = '0px';
+        panel.style.borderLeft = 'none';
+        toggleBtn.style.right = '0px';
+        toggleIcon.textContent = '←';
+        panel.querySelectorAll(':scope > *').forEach(el => {
+          el.style.display = 'none';
+        });
+      }
+      
+      // 애니메이션 후 border 복원
+      setTimeout(() => {
+        if (rightPanelOpen) {
+          panel.style.borderLeft = '1px solid rgb(51 65 85)';
+        }
+      }, 300);
+    }
+
+    function setTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        if (btn.dataset.tab === tab) {
+          btn.className = 'tab-btn flex-1 py-3 px-4 text-sm font-medium transition-all text-blue-400 border-b-2 border-blue-400 bg-slate-800/50 whitespace-nowrap';
+        } else {
+          btn.className = 'tab-btn flex-1 py-3 px-4 text-sm font-medium transition-all text-slate-500 hover:text-slate-300 hover:bg-slate-800/30 whitespace-nowrap';
+        }
+      });
+      
+      document.getElementById('tab-info').classList.toggle('hidden', tab !== 'info');
+      document.getElementById('tab-risk').classList.toggle('hidden', tab !== 'risk');
+      document.getElementById('tab-details').classList.toggle('hidden', tab !== 'details');
+    }
+
+    function updateInfoPanel() {
+      document.getElementById('info-empty').classList.add('hidden');
+      document.getElementById('info-content').classList.remove('hidden');
+      
+      document.getElementById('info-amount').textContent = `${parsedData.currency} ${formatAmount(parsedData.amount)}`;
+      document.getElementById('info-parties').textContent = `${parsedData.debtor.name} → ${parsedData.creditor.name}`;
+      document.getElementById('info-msgid').textContent = parsedData.messageId;
+      document.getElementById('info-datetime').textContent = parsedData.creationDateTime;
+      
+      const list = document.getElementById('participants-list');
+      list.innerHTML = `<h3 class="text-sm font-semibold text-slate-400 flex items-center gap-2"><span>👥</span> 참여자</h3>`;
+      
+      const participants = [
+        { icon: '👤', role: '송금인', name: parsedData.debtor.name, color: 'sky' },
+        { icon: '🏦', role: '송금 은행', name: parsedData.debtorAgent.name, bic: parsedData.debtorAgent.bic, color: 'blue' },
+      ];
+      
+      if (parsedData.intermediaryAgent1) {
+        participants.push({ icon: '🏛️', role: '중개 은행', name: parsedData.intermediaryAgent1.name, bic: parsedData.intermediaryAgent1.bic, color: 'indigo' });
+      }
+      
+      participants.push(
+        { icon: '🏦', role: '수취 은행', name: parsedData.creditorAgent.name, bic: parsedData.creditorAgent.bic, color: 'emerald' },
+        { icon: '👤', role: '수취인', name: parsedData.creditor.name, color: 'teal' }
+      );
+      
+      const colors = {
+        sky: 'from-sky-500/20 to-sky-600/10 border-sky-500/30',
+        blue: 'from-blue-500/20 to-blue-600/10 border-blue-500/30',
+        indigo: 'from-indigo-500/20 to-indigo-600/10 border-indigo-500/30',
+        emerald: 'from-emerald-500/20 to-emerald-600/10 border-emerald-500/30',
+        teal: 'from-teal-500/20 to-teal-600/10 border-teal-500/30',
+      };
+      
+      participants.forEach(p => {
+        list.innerHTML += `
+          <div class="p-3 bg-gradient-to-r ${colors[p.color]} border rounded-lg">
+            <div class="flex items-start gap-3">
+              <span class="text-xl">${p.icon}</span>
+              <div class="flex-1 min-w-0">
+                <div class="text-xs text-slate-500 mb-0.5">${p.role}</div>
+                <div class="text-sm text-white font-medium truncate">${p.name}</div>
+                ${p.bic ? `<div class="text-xs text-slate-400 font-mono mt-1">${p.bic}</div>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    // 노드 타입과 XML 태그 매핑
+    const nodeToXmlTag = {
+      debtor: 'Dbtr',
+      debtorAgent: 'DbtrAgt',
+      intermediary1: 'IntrmyAgt1',
+      intermediary2: 'IntrmyAgt2',
+      intermediary3: 'IntrmyAgt3',
+      creditorAgent: 'CdtrAgt',
+      creditor: 'Cdtr',
+    };
+
+    // 하이라이트 색상 (노드 타입별)
+    const highlightColors = {
+      debtor: { bg: 'rgba(14, 165, 233, 0.15)', border: '#0ea5e9', text: '#38bdf8' },
+      debtorAgent: { bg: 'rgba(59, 130, 246, 0.15)', border: '#3b82f6', text: '#60a5fa' },
+      intermediary1: { bg: 'rgba(99, 102, 241, 0.15)', border: '#6366f1', text: '#818cf8' },
+      intermediary2: { bg: 'rgba(139, 92, 246, 0.15)', border: '#8b5cf6', text: '#a78bfa' },
+      intermediary3: { bg: 'rgba(168, 85, 247, 0.15)', border: '#a855f7', text: '#c084fc' },
+      creditorAgent: { bg: 'rgba(16, 185, 129, 0.15)', border: '#10b981', text: '#34d399' },
+      creditor: { bg: 'rgba(20, 184, 166, 0.15)', border: '#14b8a6', text: '#2dd4bf' },
+    };
+
+    function formatExtractedXml(xml) {
+      // 각 줄의 공통 들여쓰기 제거
+      const lines = xml.split('\n');
+      if (lines.length <= 1) return xml;
+      
+      // 최소 들여쓰기 찾기 (빈 줄 제외)
+      let minIndent = Infinity;
+      lines.forEach(line => {
+        if (line.trim().length > 0) {
+          const indent = line.match(/^(\s*)/)[1].length;
+          minIndent = Math.min(minIndent, indent);
+        }
+      });
+      
+      // 공통 들여쓰기 제거
+      if (minIndent > 0 && minIndent !== Infinity) {
+        return lines.map(line => line.substring(minIndent)).join('\n');
+      }
+      
+      return xml;
+    }
+
+    function handleReset() {
+      xmlContent = '';
+      parsedData = null;
+      selectedNode = null;
+      statsCardVisible = true; // 상태 초기화
+      
+      document.getElementById('status-badge').classList.add('hidden');
+      document.getElementById('reset-btn').disabled = true;
+      document.getElementById('stats-card').classList.add('hidden');
+      document.getElementById('stats-card-open-btn').classList.add('hidden');
+      document.getElementById('country-flow-badge').classList.add('hidden');
+      document.getElementById('high-risk-alert').classList.add('hidden');
+      
+      document.getElementById('empty-state').classList.remove('hidden');
+      document.getElementById('diagram').classList.add('hidden');
+      document.getElementById('diagram').innerHTML = '';
+      
+      document.getElementById('info-empty').classList.remove('hidden');
+      document.getElementById('info-content').classList.add('hidden');
+      
+      document.getElementById('risk-empty').classList.remove('hidden');
+      document.getElementById('risk-content').classList.add('hidden');
+      
+      document.getElementById('details-empty').classList.remove('hidden');
+      document.getElementById('details-content').classList.add('hidden');
+      
+      // 서브탭 초기화
+      setSubTab('basic');
+      
+      setTab('info');
+    }
+
+    function showError(msg) {
+      document.getElementById('error-msg').classList.remove('hidden');
+      document.getElementById('error-text').textContent = msg;
+    }
+
+    function hideError() {
+      document.getElementById('error-msg').classList.add('hidden');
+    }
+
+    function formatAmount(amount) {
+      const num = parseFloat(amount);
+      if (isNaN(num)) return amount;
+      return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+  </script>
+</body>
+</html>
+
