@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=3.0, user-scalable=yes">
   <title>ISO20022 Flow Visualizer</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
@@ -449,6 +449,24 @@
         <div id="scroll-hint" class="hidden md:hidden absolute bottom-2 right-2 px-2 py-1 bg-blue-500/20 border border-blue-500/30 rounded-lg z-20 animate-pulse">
           <span class="text-blue-400 text-xs">👆 스크롤 →</span>
         </div>
+        
+        <!-- 줌 컨트롤 -->
+        <div id="zoom-controls" class="hidden absolute bottom-2 right-2 md:bottom-4 md:right-4 flex flex-col gap-1 z-20">
+          <button onclick="zoomIn()" class="w-9 h-9 md:w-10 md:h-10 bg-slate-800/90 backdrop-blur-sm border border-slate-700 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-700 hover:text-white transition-all shadow-lg" title="확대">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            </svg>
+          </button>
+          <div id="zoom-level" class="text-center text-xs text-slate-400 py-1">100%</div>
+          <button onclick="zoomOut()" class="w-9 h-9 md:w-10 md:h-10 bg-slate-800/90 backdrop-blur-sm border border-slate-700 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-700 hover:text-white transition-all shadow-lg" title="축소">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path>
+            </svg>
+          </button>
+          <button onclick="resetZoom()" class="w-9 h-9 md:w-10 md:h-10 mt-1 bg-slate-800/90 backdrop-blur-sm border border-slate-700 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-700 hover:text-white transition-all shadow-lg text-xs" title="원래 크기">
+            1:1
+          </button>
+        </div>
       </section>
 
       <!-- 우측 패널 토글 버튼 -->
@@ -665,9 +683,80 @@
     let currentTab = 'info';
     let rightPanelOpen = false;
 
-    // 드래그 기능 초기화
+    // 줌 기능
+    let currentZoom = 1;
+    const minZoom = 0.5;
+    const maxZoom = 2;
+    const zoomStep = 0.25;
+    
+    function zoomIn() {
+      if (currentZoom < maxZoom) {
+        currentZoom = Math.min(currentZoom + zoomStep, maxZoom);
+        applyZoom();
+      }
+    }
+    
+    function zoomOut() {
+      if (currentZoom > minZoom) {
+        currentZoom = Math.max(currentZoom - zoomStep, minZoom);
+        applyZoom();
+      }
+    }
+    
+    function resetZoom() {
+      currentZoom = 1;
+      applyZoom();
+    }
+    
+    function applyZoom() {
+      const diagram = document.getElementById('diagram');
+      if (diagram) {
+        diagram.style.transform = `scale(${currentZoom})`;
+        diagram.style.transformOrigin = 'top left';
+      }
+      
+      // 줌 레벨 표시 업데이트
+      const zoomLevel = document.getElementById('zoom-level');
+      if (zoomLevel) {
+        zoomLevel.textContent = Math.round(currentZoom * 100) + '%';
+      }
+    }
+    
+    // 핀치 줌 지원 (다이어그램 영역)
+    let initialPinchDistance = 0;
+    let initialZoom = 1;
+    
+    function initPinchZoom() {
+      const flowCanvas = document.getElementById('flow-canvas');
+      if (!flowCanvas) return;
+      
+      flowCanvas.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 2) {
+          initialPinchDistance = getPinchDistance(e.touches);
+          initialZoom = currentZoom;
+        }
+      }, { passive: true });
+      
+      flowCanvas.addEventListener('touchmove', function(e) {
+        if (e.touches.length === 2) {
+          const currentDistance = getPinchDistance(e.touches);
+          const scale = currentDistance / initialPinchDistance;
+          currentZoom = Math.max(minZoom, Math.min(maxZoom, initialZoom * scale));
+          applyZoom();
+        }
+      }, { passive: true });
+    }
+    
+    function getPinchDistance(touches) {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+    
+    // 페이지 로드 시 핀치 줌 초기화
     document.addEventListener('DOMContentLoaded', function() {
       initDraggable('stats-card', 'stats-card-handle');
+      initPinchZoom();
     });
     
     // 모바일 좌측 패널 토글
@@ -1299,6 +1388,11 @@
       diagram.classList.remove('hidden');
       diagram.innerHTML = '';
       
+      // 줌 컨트롤 표시 및 리셋
+      document.getElementById('zoom-controls').classList.remove('hidden');
+      currentZoom = 1;
+      applyZoom();
+      
       const participants = [];
       if (parsedData.debtor) participants.push({ type: 'debtor', data: parsedData.debtor });
       if (parsedData.debtorAgent) participants.push({ type: 'debtorAgent', data: parsedData.debtorAgent });
@@ -1769,6 +1863,9 @@
       document.getElementById('empty-state').classList.remove('hidden');
       document.getElementById('diagram').classList.add('hidden');
       document.getElementById('diagram').innerHTML = '';
+      document.getElementById('zoom-controls').classList.add('hidden');
+      currentZoom = 1;
+      applyZoom();
       
       document.getElementById('info-empty').classList.remove('hidden');
       document.getElementById('info-content').classList.add('hidden');
